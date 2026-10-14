@@ -923,6 +923,7 @@ document.querySelectorAll('a[href="#booking"]').forEach(a=>{
 });
 window.baiAuth = {
   isSignedIn: () => !!user,
+  getUser: () => user ? {uid:user.uid, email:user.email||null, name:user.displayName||null} : null,
   /* run cb once the visitor is signed in; shows account creation if not */
   require: async cb => {
     await Promise.race([ready, new Promise(r=>setTimeout(r,4000))]);
@@ -1044,8 +1045,20 @@ document.querySelectorAll('.svc-link').forEach(l=>l.addEventListener('click',()=
 document.querySelectorAll('.gallery-actions .pill').forEach(p=>p.addEventListener('click',()=>{document.querySelectorAll('.gallery-actions .pill').forEach(x=>x.classList.remove('active'));p.classList.add('active')}));
 
 const form=document.getElementById('bookForm'),modal=document.getElementById('modal');
+/* Appointments are saved to Supabase (table: public.appointments, see supabase-setup.sql).
+   Login stays on Firebase. The publishable key is safe in the browser; access is limited by RLS. */
+const SUPABASE_URL='https://hztowufwpsujariegedx.supabase.co';
+const SUPABASE_PUBLISHABLE_KEY='sb_publishable_JNtu0bsq0tVtSclH0H93Sg_KEDizY-2';
+async function saveAppointment(row){
+  const r=await fetch(SUPABASE_URL+'/rest/v1/appointments',{
+    method:'POST',
+    headers:{'apikey':SUPABASE_PUBLISHABLE_KEY,'Content-Type':'application/json','Prefer':'return=minimal'},
+    body:JSON.stringify(row)
+  });
+  if(!r.ok) throw new Error('Supabase '+r.status+': '+await r.text());
+}
 function setV(i,o){i.closest('.f-group').classList.toggle('invalid',!o);return o}
-form.addEventListener('submit',e=>{
+form.addEventListener('submit',async e=>{
   e.preventDefault();
   const svc=document.getElementById('service'),gx=document.getElementById('guests'),nm=document.getElementById('name'),ph=document.getElementById('phone'),em=document.getElementById('email');
   let ok=true;
@@ -1058,7 +1071,25 @@ form.addEventListener('submit',e=>{
   ok=setV(em,/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em.value))&&ok;
   if(!ok)return;
   if(window.baiAuth&&!window.baiAuth.isSignedIn()){window.baiAuth.require(()=>form.requestSubmit());return}
-  document.getElementById('refCode').textContent='BAI-'+Math.random().toString(36).slice(2,8).toUpperCase();
+  const ref='BAI-'+Math.random().toString(36).slice(2,8).toUpperCase();
+  const u=window.baiAuth.getUser(), btn=form.querySelector('.submit-btn'), btnTxt=btn.textContent;
+  btn.disabled=true;btn.textContent='Saving…';
+  try{
+    await saveAppointment({
+      ref_code:ref, uid:u&&u.uid, account_email:u&&u.email,
+      service:svc.value, guests:parseInt(gx.value,10),
+      appt_date:dI.value, appt_time:tS.value,
+      full_name:nm.value.trim(), phone:ph.value.trim(), email:em.value.trim(),
+      coupon:(document.getElementById('coupon').value||'').trim()||null,
+      notes:(document.getElementById('notes').value||'').trim()||null
+    });
+  }catch(err){
+    console.error(err);
+    alert('Sorry, we could not save your appointment. Please check your connection and try again.');
+    btn.disabled=false;btn.textContent=btnTxt;return;
+  }
+  btn.disabled=false;btn.textContent=btnTxt;
+  document.getElementById('refCode').textContent=ref;
   const d=new Date(dI.value+'T'+tS.value+':00');
   document.getElementById('modalSummary').innerHTML='<b>'+svc.value+'</b> for <b>'+gx.value+' guest(s)</b><br>'+d.toLocaleDateString('en-PH',{weekday:'long',month:'long',day:'numeric',year:'numeric'})+' · '+fmtTime(tS.value)+'<br>Under the name <b>'+nm.value.trim()+'</b>';
   modal.classList.add('open');form.reset();gx.value=2;
